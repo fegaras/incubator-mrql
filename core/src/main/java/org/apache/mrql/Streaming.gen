@@ -23,6 +23,566 @@ import org.apache.mrql.gen.*;
 /** Generate a physical plan from an algebraic expression */
 final public class Streaming extends AlgebraicOptimization {
 
+    final static class Environment {
+        public String name;
+        public Tree monoid;
+        public Environment next;
+
+        Environment ( String n, Tree m, Environment next ) {
+            name = n;
+            monoid = m;
+            this.next = next;
+        }
+    }
+
+    public static Tree find ( String name, Environment env ) {
+        if (env == null)
+            return #<none>;
+        else if (env.name.equals(name))
+            return env.monoid;
+        else return find(name,env.next);
+    }
+
+    static int tab_count = 0;
+
+    static Tree incr ( Tree e, Environment env ) {
+        tab_count += 3;
+        System.out.println(Interpreter.tabs(tab_count)+print_query(e));
+        Tree res = incremental(e,env);
+        System.out.println(Interpreter.tabs(tab_count)+"-> "+res);
+        tab_count -= 3;
+        return res;
+    }
+
+    // If e is a homomorphism, return the monoid;
+    // env binds variables to monoids
+    static Tree incremental ( Tree e, Environment env ) {
+        match e {
+        case groupBy(`x):
+            match incr(x,env) {
+            case none: return #<none>;
+            case fixed: return #<fixed>;
+            case `m:
+                return #<groupBy(`m)>;
+            }
+        case coGroup(`x,`y):
+            Tree mx = incr(x,env);
+            Tree my = incr(y,env);
+            if (mx.equals(#<none>) || my.equals(#<none>))
+                return #<none>;
+            if (mx.equals(#<fixed>) && my.equals(#<fixed>))
+                return #<fixed>;
+            return #<groupBy(product(`mx,`my))>;
+        case cmap(lambda(`v,bag(tuple(nth(`w,0),`u))),`x):
+            if (!w.equals(v))
+                fail;
+            match incr(x,env) {
+            case groupBy(`m):
+                Tree b = incr(u,new Environment(v.toString(),m,env));
+                if (b.equals(#<none>))
+                    fail;
+                return #<groupBy(`b)>;
+            };
+            fail
+        case cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`w,bag(tuple(`key,
+                                                                    tuple(tuple(nth(`y1,0),
+                                                                                nth(`z1,0)),
+                                                                          nth(`w1,1))))),
+                                                `u)),
+                                 nth(`y2,1))),
+                  `x):
+            if (!w1.equals(w) || !y1.equals(y) || !y2.equals(y) || !z1.equals(z))
+                fail;
+            match incr(x,env) {
+            case groupBy(groupBy(`m)):
+                Tree nv = new_var();
+                Tree nu = subst(u,#<nth(`z,1)>,nv);
+                match incr(u,new Environment(nv.toString(),m,env)) {
+                case groupBy(`n):
+                    return #<groupBy2(`n)>;
+                }
+            };
+            fail
+        case cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`w,bag(tuple(`key,
+                                                                    tuple(tuple(nth(`y1,0),
+                                                                                nth(`z1,0)),
+                                                                          nth(`w1,1))))),
+                                                `u)),
+                                 nth(nth(`y2,1),0))),
+                  `x):
+            if (!w1.equals(w) || !y1.equals(y) || !y2.equals(y) || !z1.equals(z))
+                fail;
+            match incr(x,env) {
+            case groupBy(product(groupBy(`m),groupBy(`n))):
+                Tree nx = new_var();
+                Tree ny = new_var();
+                Tree nu = subst(subst(u,#<nth(`z,1)>,nx),#<nth(nth(`y,1),1)>,ny);
+                match incr(u,new Environment(nx.toString(),m,
+                                             new Environment(ny.toString(),#<groupBy(`n)>,env))) {
+                case groupBy(`k):
+                    return #<groupBy2(`k)>;
+                }
+            };
+            fail
+       case cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`w,bag(tuple(`key,
+                                                                    tuple(tuple(nth(`y1,0),
+                                                                                nth(`z1,0)),
+                                                                          nth(`w1,1))))),
+                                                `u)),
+                                 nth(nth(`y2,1),1))),
+                  `x):
+            if (!w1.equals(w) || !y1.equals(y) || !y2.equals(y) || !z1.equals(z))
+                fail;
+            match incr(x,env) {
+            case groupBy(product(groupBy(`m),groupBy(`n))):
+                Tree nx = new_var();
+                Tree ny = new_var();
+                Tree nu = subst(subst(u,#<nth(`z,1)>,ny),#<nth(nth(`y,1),0)>,nx);
+                match incr(u,new Environment(ny.toString(),n,
+                                             new Environment(nx.toString(),#<groupBy(`m)>,env))) {
+                case groupBy(`k):
+                    return #<groupBy2(`k)>;
+                }
+            };
+            fail
+        case cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`zz,
+                                   cmap(lambda(`w,bag(tuple(`key,
+                                                            tuple(tuple(nth(`y1,0),
+                                                                        tuple(nth(`z1,0),
+                                                                              nth(`zz1,0))),
+                                                                  nth(`w1,1))))),
+                                        `u)),
+                                                nth(nth(`y3,1),1))),
+                                 nth(nth(`y2,1),0))),
+                  `x):
+            if (!w1.equals(w) || !y1.equals(y) || !y2.equals(y)
+                || !y3.equals(y) || !z1.equals(z) || !zz1.equals(zz))
+                fail;
+            match incr(x,env) {
+            case groupBy(product(`m,`n)):
+                Tree nx = new_var();
+                Tree ny = new_var();
+                Tree nu = subst(#<nth(`zz,1)>,ny,subst(#<nth(`z,1)>,nx,u));
+                match incr(u,new Environment(nx.toString(),m,
+                                             new Environment(ny.toString(),n,env))) {
+                case groupBy(`k):
+                    return #<groupBy2(`k)>;
+                }
+            };
+            fail
+        case cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`zz,
+                                   cmap(lambda(`w,bag(tuple(`key,
+                                                            tuple(tuple(nth(`y1,0),
+                                                                        tuple(nth(`z1,0),
+                                                                              nth(`zz1,0))),
+                                                                  nth(`w1,1))))),
+                                        `u)),
+                                                nth(nth(`y3,1),0))),
+                                 nth(nth(`y2,1),1))),
+                  `x):
+            if (!w1.equals(w) || !y1.equals(y) || !y2.equals(y)
+                || !y3.equals(y) || !z1.equals(z) || !zz1.equals(zz))
+                fail;
+            match incr(x,env) {
+            case groupBy(product(`m,`n)):
+                Tree nx = new_var();
+                Tree ny = new_var();
+                Tree nu = subst(subst(u,#<nth(`z,1)>,ny),#<nth(`zz,1)>,nx);
+                match incr(u,new Environment(nx.toString(),n,
+                                             new Environment(ny.toString(),m,env))) {
+                case groupBy(`k):
+                    return #<groupBy2(`k)>;
+                }
+            };
+            fail
+        case cmap(lambda(`y,bag(tuple(`key,tuple(tuple(),`u)))),
+                  call(stream,...)):
+            return #<groupBy(union)>;
+        case cmap(lambda(`v,`b),`x):
+            match incr(x,env) {
+            case union: return #<union>;
+            case fixed:
+                match incr(b,new Environment(v.toString(),#<fixed>,env)) {
+                case union: return #<union>;
+                case fixed: return #<fixed>;
+                }
+            };
+            fail
+        case tuple(...s):
+            Trees ms = #[ ];
+            for ( Tree x: s )
+                match incr(x,env) {
+                case none: return #<none>;
+                case union:
+                    ms = ms.append(#<monoid(lambda(x,merge(nth(x,0),nth(x,1))),
+                                            bag(),lambda(x,bag(x)))>);
+                case `m:
+                    ms = ms.append(m);
+                };
+            Tree av = new_var();
+            Tree uv = new_var();
+            Trees as = #[ ];
+            Trees zs = #[ ];
+            Trees us = #[ ];
+            int i = 0;
+            for ( Tree m: ms ) {
+                match m {
+                case fixed:
+                case monoid(`plus,`zero,`unit):
+                    as = as.append(#<apply(`plus,tuple(nth(nth(`av,0),`i),nth(nth(`av,1),`i)))>);
+                    zs = zs.append(zero);
+                    us = us.append(#<apply(`unit,nth(`uv,`i))>);
+                };
+                i++;
+            };
+            return Simplification.simplify_all(#<monoid(lambda(`av,tuple(...as)),
+                                                        tuple(...zs),
+                                                        lambda(`uv,tuple(...us)))>);
+        case call(stream,...):
+            return #<union>;
+        case call(source,...):
+            return #<fixed>;
+        case call(`f,`s):
+            for ( Tree monoid: monoids )
+                match monoid {
+                case `aggr(`mtp,`plus,`zero,`unit):
+                    if (aggr.equals(f.toString()))
+                        return #<monoid(`plus,`zero,`unit)>;
+                };
+            fail
+        case _:
+            if (e.is_variable())
+                return find(e.toString(),env);
+        };
+        return #<none>;
+    }
+
+    static Tree incremental ( Tree e ) {
+        return incr(e,null);
+    }
+
+    // split e into two parts: a homomorphism and a non-homomrphism
+    // Must satisfy: split(e)=(f,u) => e=f(u) where f is a functor and u is a homomorphism
+    static Tree split ( Tree e, Environment env ) {
+        match e {
+        case groupBy(`x):
+            match split(x,env) {
+            case p(lambda(`v,bag(`w)),`h):
+                if (!v.equals(w))
+                    fail;
+                return #<p(lambda(`v,`w),groupBy(`h))>;
+            case p(`f,`u):
+                Tree v = new_var();
+                Tree w = new_var();
+                return #<p(lambda(`v,cmap(lambda(`w,apply(`f,tuple(nth(`v,0),`w))),nth(`v,1))),
+                           groupBy(`u))>;
+            };
+            fail
+        case cmap(`g,`x):
+            match split(x,env) {
+            case p(lambda(`v,cmap(`f,`w)),`u):
+                if (!v.equals(w))
+                    fail;
+                return #<p(`f,cmap(`g,`u))>;
+            };
+            fail
+        case tuple(...s):
+            return #<none>;
+        case call(stream,...):
+            Tree v = new_var();
+            return #<p(lambda(`v,bag(`v)),`e)>;
+        case call(source,...):
+            Tree v = new_var();
+            return #<p(lambda(`v,bag(`v)),`e)>;
+        case call(`f,`s):
+            for ( Tree monoid: monoids )
+                match monoid {
+                case `aggr(`mtp,`plus,`zero,`unit):
+                    if (aggr.equals(f.toString())) {
+			Tree v = new_var();
+                        return #<p(lambda(`v,bag(`v)),`e)>;
+		    }
+                };
+            fail
+        };
+        return #<none>;
+    }
+
+    // Inject lineage tracing to propagate join and group-by keys
+    static Tree inject ( Tree e ) {
+        match e {
+        case cmap(lambda(`z,cmap(lambda(`v,`u),nth(`w,1))),groupBy(`s)):
+            if (!w.equals(z))
+                fail;
+            Tree nv = new_var();
+            Tree nw = new_var();
+            Tree ns = inject(s);
+            Tree nu = subst(v,#<nth(`nv,1)>,u);
+            nu = #<cmap(lambda(`nw,bag(tuple(nth(`nw,0),
+                                             tuple(tuple(nth(`z,0),nth(`nv,0)),
+                                                   nth(`nw,1))))),
+                        `nu)>;
+            return #<cmap(lambda(`z,cmap(lambda(`nv,`nu),nth(`w,1))),groupBy(`ns))>;
+        case cmap(lambda(`z,cmap(lambda(`x,cmap(lambda(`y,`u),
+                                                nth(nth(`w2,1),1))),
+                                 nth(nth(`w1,1),0))),
+                  coGroup(`e1,`e2)):
+            if (!w1.equals(z) || !w2.equals(z))
+                fail;
+            Tree nx = new_var();
+            Tree ny = new_var();
+            Tree nw = new_var();
+            Tree n1 = inject(e1);
+            Tree n2 = inject(e2);
+            Tree nu = subst(x,#<nth(`nx,1)>,
+                            subst(y,#<nth(`ny,1)>,u));
+            nu = #<cmap(lambda(`nw,bag(tuple(nth(`nw,0),
+                                             tuple(tuple(nth(`z,0),tuple(nth(`nx,0),nth(`ny,0))),
+                                                   nth(`nw,1))))),
+                        `nu)>;
+            return #<cmap(lambda(`z,cmap(lambda(`nx,cmap(lambda(`ny,`nu),
+                                                         nth(nth(`w2,1),1))),
+                                         nth(nth(`w1,1),0))),
+                          coGroup(`n1,`n2))>;
+        case cmap(lambda(`z,cmap(lambda(`y,cmap(lambda(`x,`u),
+                                                nth(nth(`w2,1),0))),
+                                 nth(nth(`w1,1),1))),
+                  coGroup(`e1,`e2)):
+            if (!w1.equals(z) || !w2.equals(z))
+                fail;
+            return inject(#<cmap(lambda(`z,cmap(lambda(`x,cmap(lambda(`y,`u),
+                                                               nth(nth(`w2,1),1))),
+                                                nth(nth(`w1,1),0))),
+                                 coGroup(`e1,`e2))>);
+        case cmap(lambda(`z,cmap(lambda(`x,`u),nth(nth(`w,1),0))),
+                  coGroup(`e1,`e2)):
+            if (!w.equals(z))
+                fail;
+            Tree nx = new_var();
+            Tree nw = new_var();
+            Tree n1 = inject(e1);
+            Tree n2 = inject(e2);
+            Tree nu = subst(x,#<nth(`nx,1)>,
+                            subst(#<nth(nth(`z,1),0)>,
+                                  #<reduce(union,cmap(lambda(x,bag(nth(x,1))),nth(nth(`z,1),0)))>,u));
+            nu = #<cmap(lambda(`nw,bag(tuple(nth(`nw,0),
+                                             tuple(tuple(nth(`z,0),nth(`nx,0)),
+                                                   nth(`nw,1))))),
+                        `nu)>;
+            return #<cmap(lambda(`z,cmap(lambda(`nx,`nu),nth(nth(`w,1),0))),
+                          coGroup(`n1,`n2))>;
+        case cmap(lambda(`z,cmap(lambda(`y,`u),nth(nth(`w,1),1))),
+                  coGroup(`e1,`e2)):
+            if (!w.equals(z))
+                fail;
+            return inject(#<cmap(lambda(`z,cmap(lambda(`y,`u),nth(nth(`w,1),0))),
+                                 coGroup(`e2,`e1))>);
+	case cmap(lambda(`x,`u),call(stream,...s)):
+            Tree nv = new_var();
+	    return #<cmap(lambda(`x,cmap(lambda(`nv,bag(tuple(nth(`nv,0),
+                                                      tuple(tuple(),nth(`nv,1))))),`u)),
+			  call(stream,...s))>;
+        case tuple(...as):
+            Trees bs = #[ ];
+            for ( Tree a: as )
+                bs = bs.append(inject(a));
+            return #<tuple(...bs)>;
+        };
+        return e;
+    }
+
+    // must return a functor: restore . inject = id
+    static Tree restore ( Tree e, Tree source ) {
+        match e {
+        case cmap(lambda(`x,cmap(lambda(`v,`u),nth(`z,1))),groupBy(`s)):
+            if (!z.equals(x))
+                fail;
+            return #<cmap(lambda(`x,bag(tuple(nth(`x,0),nth(nth(`x,1),1)))),`source)>;
+        case cmap(lambda(`z,cmap(lambda(`x,cmap(lambda(`y,`u),nth(nth(`w2,1),1))),
+                                 nth(nth(`w1,1),0))),
+                  coGroup(`e1,`e2)):
+            if (!w1.equals(z) || !w2.equals(z))
+                fail;
+            return #<cmap(lambda(`z,bag(tuple(nth(`z,0),nth(nth(`z,1),1)))),`source)>;
+        case cmap(lambda(`z,cmap(lambda(`y,cmap(lambda(`x,`u),nth(nth(`w2,1),0))),
+                                 nth(nth(`w1,1),1))),
+                  coGroup(`e1,`e2)):
+            if (!w1.equals(z) || !w2.equals(z))
+                fail;
+            return #<cmap(lambda(`z,bag(tuple(nth(`z,0),nth(nth(`z,1),1)))),`source)>;
+        case cmap(lambda(`z,cmap(lambda(`x,`u),nth(nth(`w,1),0))),coGroup(`e1,`e2)):
+            if (!w.equals(z))
+                fail;
+            return #<cmap(lambda(`z,bag(tuple(nth(`z,0),nth(nth(`z,1),1)))),`source)>;
+        case cmap(lambda(`z,cmap(lambda(`y,`u),nth(nth(`w,1),1))),coGroup(`e1,`e2)):
+            if (!w.equals(z))
+                fail;
+            return #<cmap(lambda(`z,bag(tuple(nth(`z,0),nth(nth(`z,1),1)))),`source)>;
+        case tuple(...as):
+            Trees bs = #[ ];
+            int i = 0;
+            for ( Tree a: as )
+                bs = bs.append(restore(a,#<nth(`source,`(i++))>));
+            return #<tuple(...bs)>;
+        };
+        return source;
+    }
+
+    static Tree inject_lineage ( Tree e ) {
+        match e {
+        case groupBy(`u):
+            match TypeInference.type_inference(e) {
+            case `T(`xtp):
+                Tree v = new_var();
+                Tree nu = Simplification.simplify_all(inject(u));
+                TypeInference.type_inference(nu);
+                type_env.insert(v.toString(),xtp);
+                System.out.println("@@@@@@");
+                System.out.println(nu.pretty(0));
+                System.out.println(incremental(nu).pretty(0));
+                return #<cmap(lambda(`v,bag(tuple(nth(`v,0),nth(nth(`v,1),1)))),groupBy(`nu))>;
+            }
+        case coGroup(`x,`y):
+            match TypeInference.type_inference(e) {
+            case `T(`xtp):
+                Tree v = new_var();
+                Tree nx = Simplification.simplify_all(inject(x));
+                Tree ny = Simplification.simplify_all(inject(y));
+                type_env.insert(v.toString(),xtp);
+                TypeInference.type_inference(nx);
+                TypeInference.type_inference(ny);
+                System.out.println(incremental(nx).pretty(0));
+                System.out.println(incremental(ny).pretty(0));
+                return #<cmap(lambda(`v,bag(tuple(nth(`v,0),nth(nth(`v,1),1)))),coGroup(`nx,`ny))>;
+            }
+        case `f(...as):
+            Trees bs = #[ ];
+            for ( Tree a: as )
+                bs = bs.append(inject_lineage(a));
+            return #<`f(...bs)>;
+        };
+        return e;
+    }
+
+    static Tree normalize_term ( Tree e ) {
+        match e {
+        case join(`kx,`ky,`r,`x,`y):
+            match TypeInference.type_inference(x) {
+            case `T(`xtp):
+                match TypeInference.type_inference(x) {
+                case `S(`ytp):
+                    Tree v = new_var();
+                    Tree vx = new_var();
+                    Tree vy = new_var();
+                    type_env.insert(vx.toString(),xtp);
+                    type_env.insert(vy.toString(),ytp);
+                    type_env.insert(v.toString(),#<tuple(none,tuple(`T(`xtp),`S(`ytp)))>);
+                    return normalize_term(#<cmap(lambda(`v,apply(`r,tuple(nth(nth(`v,1),0),
+                                                                          nth(nth(`v,1),1)))),
+                                                 coGroup(cmap(lambda(`vx,bag(tuple(apply(`kx,`vx),`vx))),`x),
+                                                         cmap(lambda(`vy,bag(tuple(apply(`ky,`vy),`vy))),`y)))>);
+                }
+            };
+            fail
+        case groupBy(cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`w,bag(tuple(`key,`value))),
+                                                        nth(nth(`y2,1),1))),
+                                         nth(nth(`y1,1),0))),
+                          coGroup(...r))):
+            if (!y1.equals(y) || !y2.equals(y) || free_variables(key,#[]).member(w))
+                fail;
+            Tree nv = new_var();
+            Tree nw = new_var();
+            Tree ne = #<cmap(lambda(`nv,cmap(lambda(`nw,bag(tuple(nth(`nv,0),`nw))),nth(`nv,1))),
+                             groupBy(cmap(lambda(`y,cmap(lambda(`z,bag(tuple(`key,cmap(lambda(`w,bag(`value)),
+                                                                                       nth(nth(`y2,1),1))))),
+                                                         nth(nth(`y1,1),0))),
+                                          coGroup(...r))))>;
+            TypeInference.type_inference(ne);
+            return normalize_term(ne);
+        case groupBy(cmap(lambda(`y,cmap(lambda(`z,cmap(lambda(`w,bag(tuple(`key,`value))),
+                                                        nth(nth(`y2,1),0))),
+                                         nth(nth(`y1,1),1))),
+                          coGroup(...r))):
+            if (!y1.equals(y) || !y2.equals(y) || free_variables(key,#[]).member(w))
+                fail;
+            Tree nv = new_var();
+            Tree nw = new_var();
+            Tree ne = #<cmap(lambda(`nv,cmap(lambda(`nw,bag(tuple(nth(`nv,0),`nw))),nth(`nv,1))),
+                             groupBy(cmap(lambda(`y,cmap(lambda(`z,bag(tuple(`key,cmap(lambda(`w,bag(`value)),
+                                                                                       nth(nth(`y2,1),0))))),
+                                                         nth(nth(`y1,1),1))),
+                                          coGroup(...r))))>;
+            TypeInference.type_inference(ne);
+            return normalize_term(ne);
+        case project(`x,`a):
+            match TypeInference.type_inference(x) {
+            case `T(`tp):
+                if (!is_collection(T))
+                    fail;
+                Tree v = new_var();
+                type_env.insert(v.toString(),tp);
+                return normalize_term(#<cmap(lambda(`v,bag(project(`v,`a))),`x)>);
+            };
+            fail
+        case nth(`x,`n):
+            match TypeInference.type_inference(x) {
+            case `T(`tp):
+                if (!is_collection(T))
+                    fail;
+                Tree v = new_var();
+                type_env.insert(v.toString(),tp);
+                return normalize_term(#<cmap(lambda(`v,bag(nth(`v,`n))),`x)>);
+            };
+            fail
+        case call(`f,`s):
+            for ( Tree monoid: monoids )
+                match monoid {
+                case `aggr(`mtp,`plus,`zero,`unit):
+                    if (aggr.equals(f.toString())) {
+			Tree v = new_var();
+                        Tree ns = normalize_term(s);
+                        return #<reduce(`aggr,`ns)>;
+		    }
+                };
+            fail
+        case cmap(`f,cmap(lambda(`v,`u),`x)):
+            return normalize_term(#<cmap(lambda(`v,cmap(`f,`u)),`x)>);
+        case nth(tuple(...al),`n):
+            if (!n.is_long())
+                fail;
+            int i = (int)n.longValue();
+            if (i >= 0 && i < al.length())
+                return normalize_term(al.nth(i));
+        case project(record(...bl),`a):
+            for ( Tree b: bl )
+                match b {
+                case bind(`v,`u):
+                    if (v.equals(a))
+                        return normalize_term(u);
+                };
+        case apply(lambda(`v,`b),`u):
+            return normalize_term(subst_var(v,u,b));
+        case groupBy(`x):
+            Tree nx = normalize_term(x);
+            if (nx.equals(x))
+                return e;
+            else return normalize_term(#<groupBy(`nx)>);
+        case `f(...as):
+            Trees bs = #[ ];
+            for ( Tree a: as )
+                bs = bs.append(normalize_term(a));
+            return #<`f(...bs)>;
+        };
+        return e;
+    }
+
+    public static Tree normalize_all ( Tree e ) {
+        Tree ne = normalize_term(e);
+        if (e.equals(ne))
+            return e;
+        else return normalize_all(ne);
+    }
+
     static boolean is_streaming ( Tree e ) {
         match e {
         case call(stream,...): return true;

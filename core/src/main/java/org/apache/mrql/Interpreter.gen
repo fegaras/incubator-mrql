@@ -857,6 +857,20 @@ public class Interpreter extends TypeInference {
             Tree pt = type_inference(ne);
             if (Config.trace)
                 System.out.println("Algebraic type: "+print_type(pt));
+            if (Config.stream_window > 0) {
+                System.out.println(ne.pretty(0));
+                //System.out.println(Streaming.restore(ne,#<x>).pretty(0));
+                Tree ne2 = Streaming.normalize_term(ne);
+                System.out.println(ne2.pretty(0));
+                ne2 = Simplification.simplify_all(ne2);
+                System.out.println(ne2.pretty(0));
+                ne2 = Simplification.simplify_all(Streaming.inject_lineage(ne2));
+                System.out.println(ne2.pretty(0));
+                System.out.println(Streaming.normalize_term(ne2).pretty(0));
+                //ne = Streaming.incremental(ne);
+                //System.out.println(ne.pretty(0));
+                return ne;
+            };
             ne = AlgebraicOptimization.translate_all(ne);
             if (Config.trace)
                 System.out.println("Translated expression:\n"+ne.pretty(0));

@@ -883,6 +883,25 @@ public class TypeInference extends Translator {
                             : #<bag(tuple(`k,list(`v)))>;
             };
             type_error(e,"Wrong groupBy: "+print_query(e)+" of type "+print_type(tp));
+        case coGroup(`x,`y):
+            Tree xtp = type_inference2(x);
+            Tree ytp = type_inference2(y);
+            match xtp {
+            case `T(tuple(`kx,`a)):
+                if (!is_collection(T))
+                    type_error(e,"Wrong coGroup left operand: "+print_query(x));
+                match xtp {
+                case `S(tuple(`ky,`b)):
+                    if (!is_collection(T))
+                        type_error(e,"Wrong coGroup right operand: "+print_query(y));
+                    if (unify(kx,ky) == null)
+                        type_error(e,"incompatible keys in coGroup: "+print_query(e));
+                    return (is_persistent_collection(T) && is_persistent_collection(S))
+                        ? #<Bag(tuple(`kx,tuple(`T(`a),`S(`b))))>
+                        : #<bag(tuple(`kx,tuple(`T(`a),`S(`b))))>;
+                }
+            };
+            type_error(e,"Wrong coGroup: "+print_query(e));
         case orderBy(`u):
             Tree tp = type_inference2(u);
             match tp {
